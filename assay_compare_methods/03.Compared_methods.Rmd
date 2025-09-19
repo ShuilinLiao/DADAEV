@@ -1,0 +1,326 @@
+---
+title: "cpar.test.Rmd"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(dplyr)
+library(tibble)
+library(Biobase)
+rm(list = ls())
+source("./CompareMethods.R")
+```
+
+# convert gene ID of ref data
+before run this part, need to run assay_diffusion/DADA_data_sigComp.ipynb
+```{r}
+GetCpmpDat <- function(){
+  
+  ## reference matrix from self_construct
+  # Sig <- read.csv("../result/compare_method/GTE_Ref/Sig.csv") # DWSL method
+  # Sig <- read.csv("../result/compare_method/GTE_Ref/TSS_score_over4.csv")[,-2] # TSS method
+  Sig <- read.csv("../result/compare_method/GTE_Ref/TSS_score_over_sig.csv")
+  int_gene <- Sig$Gene
+  ref.m.deduplicated <- Sig %>% data.frame() %>% column_to_rownames("Gene")
+  ref2.m <- ref.m.deduplicated[int_gene, ]
+  
+  ## EV expression profile
+  stim_gtex_x = read.csv("../result/data_sigComp/GTE_x_test.csv") %>%  t() %>%  data.matrix()
+  stim_gtex_y = read.csv("../result/data_sigComp/GTE_y_test.csv") %>%  t() %>%  data.matrix()
+  stim_hpa_x = read.csv("../result/data_sigComp/HPA_x.csv") %>%  t() %>%  data.matrix()
+  stim_hpa_y = read.csv("../result/data_sigComp/HPA_y.csv") %>%  t() %>%  data.matrix()
+  real_x = read.csv("../result/data_sigComp/real_x.csv") %>%  t() %>%  data.matrix()
+  
+  ## sce object
+  load("../result/compare_method/GTE_Ref/expr_labels.rda")
+  exp_dat <- gtex.exp_fil_depSC[int_gene, ] %>%  t() %>%  
+    data.frame()
+  
+  meta_dat <- data.frame(
+    cellType = gtex_labels,
+    sampleID = colnames(gtex.exp_fil_depSC)
+  )
+  
+  sce <- SingleCellExperiment(assays = list(counts = t(exp_dat)), colData = meta_dat) # sce中行是基因
+  
+  ## save data
+  save(ref2.m, sce, 
+       stim_gtex_x, stim_gtex_y,
+       stim_hpa_x, stim_hpa_y,
+       real_x,
+       file = "../result/data_sigComp/CompareMat.rda")
+
+  write.table(ref2.m %>% rownames_to_column("geneID"),
+            file = "../result/data_sigComp/CompareMat_ref.txt",
+            sep = "\t", row.names = F)
+    
+  write.table(stim_gtex_x %>% data.frame() %>% rownames_to_column("geneID"),
+              file = "../result/data_sigComp/CompareMat_bulk_stim_gtex.txt",
+              sep = "\t", row.names = F)
+
+  write.table(stim_hpa_x %>% data.frame() %>% rownames_to_column("geneID"),
+            file = "../result/data_sigComp/CompareMat_bulk_stim_hpa.txt",
+            sep = "\t", row.names = F)
+
+  write.table(real_x %>% data.frame() %>% rownames_to_column("geneID"),
+          file = "../result/data_sigComp/CompareMat_bulk_real.txt",
+          sep = "\t", row.names = F)
+
+}
+
+# GetCpmpDat()
+```
+
+
+# func
+```{r}
+append_to_rda <- function(rda_path, ..., verbose = TRUE) {
+  # 创建一个新的环境用来加载旧文件
+  tmp_env <- new.env()
+  load(rda_path, envir = tmp_env)
+  
+  # 获取已有对象
+  old_vars <- as.list(tmp_env)
+
+  # 获取新对象
+  new_vars <- list(...)
+  new_names <- names(new_vars)
+  if (is.null(new_names) || any(new_names == "")) {
+    stop("Please name all objects explicitly, like append_to_rda('file.rda', a = a, b = b)")
+  }
+
+  # 合并新旧对象（新对象会覆盖同名旧对象）
+  all_vars <- c(old_vars, new_vars)
+
+  # 保存
+  save(list = names(all_vars), file = rda_path, envir = list2env(all_vars))
+
+  if (verbose) {
+    cat("Saved to:", rda_path, "\nObjects saved:", paste(names(all_vars), collapse = ", "), "\n")
+  }
+}
+
+```
+
+# get pred frac and x
+
+## EV-origin
+```{r}
+load("../result/data_sigComp/CompareMat.rda")
+res_stim_gtex_EVOrigin <- EVOriginMet(data2.m = stim_gtex_x, ref2.m = ref2.m)
+# estF.m_EVOrigin = res$estF.m %>% as.data.frame 
+# estF.ab.m_EVOrigin = res$estF.ab.m %>% as.data.frame
+res_stim_hpa_EVOrigin <- EVOriginMet(data2.m = stim_hpa_x, ref2.m = ref2.m)
+res_real_EVOrigin <- EVOriginMet(data2.m = real_x, ref2.m = ref2.m)
+
+save(res_stim_gtex_EVOrigin, res_stim_hpa_EVOrigin, res_real_EVOrigin,
+     file = "../result/compare_method/estF.m_methods.rda")
+```
+
+## Cibersort
+```{r}
+source('./Cibersort.R')
+estF.m_stim_gtex_Cibersort <- CIBERSORT("../result/data_sigComp/CompareMat_ref.txt", 
+                         "../result/data_sigComp/CompareMat_bulk_stim_gtex.txt", 
+                         perm = 50, QN = F) %>% 
+  as.data.frame %>%
+  dplyr::select(-one_of(c("P-value", "Correlation", "RMSE"))) %>% 
+  t()  %>% 
+  as.data.frame 
+
+estF.m_stim_hpa_Cibersort <- CIBERSORT("../result/data_sigComp/CompareMat_ref.txt", 
+                         "../result/data_sigComp/CompareMat_bulk_stim_hpa.txt", 
+                         perm = 50, QN = F) %>% 
+  as.data.frame %>%
+  dplyr::select(-one_of(c("P-value", "Correlation", "RMSE"))) %>% 
+  t()  %>% 
+  as.data.frame 
+
+estF.m_real_Cibersort <- CIBERSORT("../result/data_sigComp/CompareMat_ref.txt", 
+                         "../result/data_sigComp/CompareMat_bulk_real.txt", 
+                         perm = 50, QN = F) %>% 
+  as.data.frame %>%
+  dplyr::select(-one_of(c("P-value", "Correlation", "RMSE"))) %>% 
+  t()  %>% 
+  as.data.frame 
+
+append_to_rda(
+  "../result/compare_method/estF.m_methods.rda",
+  estF.m_stim_gtex_Cibersort = estF.m_stim_gtex_Cibersort,
+  estF.m_stim_hpa_Cibersort  = estF.m_stim_hpa_Cibersort,
+  estF.m_real_Cibersort      = estF.m_real_Cibersort
+)
+```
+
+## Cibersortx
+```{r}
+
+
+```
+
+## Bisque
+```{r}
+load("../result/data_sigComp/CompareMat.rda")
+estF.m_stim_gtex_Bisque <- BisqueMet(data2.m = stim_gtex_x, ref2.m = ref2.m) %>% as.data.frame
+estF.m_stim_hpa_Bisque <- BisqueMet(data2.m = stim_hpa_x, ref2.m = ref2.m) %>% as.data.frame 
+estF.m_real_Bisque <- BisqueMet(data2.m = real_x, ref2.m = ref2.m) %>% as.data.frame 
+
+append_to_rda(
+  "../result/compare_method/estF.m_methods.rda",
+  estF.m_stim_gtex_Bisque = estF.m_stim_gtex_Bisque,
+  estF.m_stim_hpa_Bisque  = estF.m_stim_hpa_Bisque,
+  estF.m_real_Bisque      = estF.m_real_Bisque
+)
+```
+
+## MuSiC 
+* (该函数用的是sce的object)
+```{r}
+library(MuSiC)
+# GSE50244.bulk.eset = readRDS("../data/compare_method_data/MuSiC/GSE50244bulkeset.rds")
+# bulk.mtx = exprs(GSE50244.bulk.eset)
+# bulk.meta = exprs(GSE50244.bulk.eset)
+# EMTAB.sce = readRDS('../data/compare_method_data/MuSiC/EMTABsce_healthy.rds')
+# 
+# Est.prop.GSE50244 = music_prop(bulk.mtx = bulk.mtx, 
+#                                sc.sce = EMTAB.sce, # 提供的是sce object，而不是ref data
+#                                clusters = 'cellType', samples = 'sampleID', 
+#                                select.ct = c('alpha', 'beta', 'delta', 'gamma'))
+# names(Est.prop.GSE50244)
+# a = data.matrix(Est.prop.GSE50244$Est.prop.weighted)
+# jitter.fig = Jitter_Est(list(data.matrix(Est.prop.GSE50244$Est.prop.weighted),
+#                              data.matrix(Est.prop.GSE50244$Est.prop.allgene)),
+#                         method.name = c('MuSiC', 'NNLS'), 
+#                         title = 'Jitter plot of Est Proportions')
+
+load("../result/data_sigComp/CompareMat.rda")
+res_stim_gtex_music = music_prop(bulk.mtx = stim_gtex_x, sc.sce = sce, clusters = 'cellType', samples = 'sampleID')
+# estF.m_MuSiC = res$Est.prop.weighted
+# estF.m_MuSiCnnls = res$Est.prop.allgene
+res_stim_hpa_music = music_prop(bulk.mtx = stim_hpa_x, sc.sce = sce, clusters = 'cellType', samples = 'sampleID')
+res_real_music = music_prop(bulk.mtx = real_x, sc.sce = sce, clusters = 'cellType', samples = 'sampleID')
+
+append_to_rda(
+  "../result/compare_method/estF.m_methods.rda",
+  res_stim_gtex_music = res_stim_gtex_music,
+  res_stim_hpa_music  = res_stim_hpa_music,
+  res_real_music      = res_real_music
+)
+```
+
+## DeconRNASeq
+```{r}
+load("../result/data_sigComp/CompareMat.rda")
+estF.m_stim_gtex_DeconRNASeq <- DeconRNASeqMet(data2.m = stim_gtex_x, ref2.m = ref2.m)
+estF.m_stim_hpa_DeconRNASeq <- DeconRNASeqMet(data2.m = stim_hpa_x, ref2.m = ref2.m)
+estF.m_real_DeconRNASeq <- DeconRNASeqMet(data2.m = real_x, ref2.m = ref2.m)
+
+append_to_rda(
+  "../result/compare_method/estF.m_methods.rda",
+  estF.m_stim_gtex_DeconRNASeq = estF.m_stim_gtex_DeconRNASeq,
+  estF.m_stim_hpa_DeconRNASeq  = estF.m_stim_hpa_DeconRNASeq,
+  estF.m_real_DeconRNASeq      = estF.m_real_DeconRNASeq
+)
+```
+
+
+## Dtangle
+```{r}
+load("../result/data_sigComp/CompareMat.rda")
+estF.m_stim_gtex_Dtangle <- DtangleMet(data2.m = stim_gtex_x, ref2.m = ref2.m)
+estF.m_stim_hpa_Dtangle <- DtangleMet(data2.m = stim_hpa_x, ref2.m = ref2.m)
+estF.m_real_Dtangle <- DtangleMet(data2.m = real_x, ref2.m = ref2.m)
+
+append_to_rda(
+  "../result/compare_method/estF.m_methods.rda",
+  estF.m_stim_gtex_Dtangle = estF.m_stim_gtex_Dtangle,
+  estF.m_stim_hpa_Dtangle  = estF.m_stim_hpa_Dtangle,
+  estF.m_real_Dtangle      = estF.m_real_Dtangle
+)
+```
+
+## DWLS
+```{r}
+source("./Deconvolution_functions.R")
+load("../result/data_sigComp/CompareMat.rda")
+sig = as.matrix(ref2.m)
+dataBulk = stim_gtex_x[,102]
+names(dataBulk) = rownames(stim_gtex_x)
+
+res_stim_gtex_dwls <- DWLSMet(data2.m = stim_gtex_x, ref2.m = ref2.m)
+# estF.m_dwls <- res$solDWLS
+# estF.m_dwls_SVR <- res$solSVR
+# estF.m_dwls_OLS <- res$solOLS
+res_hpa_dwls <- DWLSMet(data2.m = stim_hpa_x, ref2.m = ref2.m)
+# res_real_dwls <- DWLSMet(data2.m = real_x, ref2.m = ref2.m)
+
+
+append_to_rda(
+  "../result/compare_method/estF.m_methods.rda",
+  res_stim_gtex_dwls = res_stim_gtex_dwls,
+  res_hpa_dwls  = res_hpa_dwls
+  # res_real_dwls      = res_real_dwls
+)
+```
+
+# write frac metric
+```{r}
+load("../result/data_sigComp/CompareMat.rda")
+load("../result/compare_method/estF.m_methods.rda")
+
+eva_f_EVOrigin = CalculateEvaMet_f(estF.m = res_stim_gtex_EVOrigin[["estF.m"]], real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "EVOrigin")
+eva_f_Cibersort = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_Cibersort, real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "Cibersort") 
+eva_f_Bisque = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_Bisque, real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "Bisque") 
+eva_f_DeconRNASeq = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_DeconRNASeq, real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "DeconRNASeq")
+eva_f_MuSiC = CalculateEvaMet_f(estF.m = res_stim_gtex_music$Est.prop.weighted %>% t(), real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "MuSiC") 
+eva_f_MuSiCnnls = CalculateEvaMet_f(estF.m = res_stim_gtex_music$Est.prop.allgene %>% t(), real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "MuSiCnnls")
+eva_f_dwls = CalculateEvaMet_f(estF.m = res_stim_gtex_dwls[["solDWLS"]] %>% t (), real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "dwls") 
+
+# eva_f_Dtangle = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_Dtangle %>% t (), real.m = stim_gtex_y) %>% 
+#   mutate(dataset = "GTE") %>% mutate(method = "Dtangle") 
+
+merg_gte <- do.call("rbind", list(eva_f_EVOrigin, eva_f_Cibersort, eva_f_Bisque, eva_f_DeconRNASeq,
+                                  eva_f_MuSiC, eva_f_MuSiCnnls, eva_f_dwls))
+write.csv(merg_gte, "../result/compare_method/frac_perf_gtex.csv")
+
+eva_f_EVOrigin = CalculateEvaMet_f(estF.m = res_stim_hpa_EVOrigin[["estF.m"]], real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "EVOrigin")
+eva_f_Cibersort = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_Cibersort, real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "Cibersort")  
+eva_f_Bisque = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_Bisque, real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "Bisque")  
+eva_f_DeconRNASeq = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_DeconRNASeq, real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "DeconRNASeq") 
+eva_f_MuSiC = CalculateEvaMet_f(estF.m = res_stim_hpa_music$Est.prop.weighted %>% t(), real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "MuSiC") 
+eva_f_MuSiCnnls = CalculateEvaMet_f(estF.m = res_stim_hpa_music$Est.prop.allgene %>% t(), real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "MuSiCnnls")
+eva_f_dwls = CalculateEvaMet_f(estF.m = res_hpa_dwls[["solDWLS"]] %>% t (), real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "dwls")
+merg_hpa <- do.call("rbind", list(eva_f_EVOrigin, eva_f_Cibersort, eva_f_Bisque, eva_f_DeconRNASeq,
+                                  eva_f_MuSiC, eva_f_MuSiCnnls, eva_f_dwls))
+write.csv(merg_hpa, "../result/compare_method/frac_perf_hpa.csv")
+```
+
+# DADA
+```{r}
+estF.m_stim_gtex_dada <- read.csv("../result/model_sigComp/GTE_AE_y.csv", header = F) %>% t() %>% data.frame()
+eva_f_gte_DADA = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_dada, real.m = stim_gtex_y) %>% 
+  mutate(dataset = "GTE") %>% mutate(method = "DADA")
+
+estF.m_stim_hpa_dada <- read.csv("../result/model_sigComp/HPA_DADA_y.csv", header = F) %>% t() %>% data.frame()
+eva_f_hpa_DADA = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_dada, real.m = stim_hpa_y) %>% 
+  mutate(dataset = "HPA") %>% mutate(method = "DADA")
+
+eva_f_gte_DADA_py <- read.csv("../result/model_sigComp/GTE_AE_y_ccc_values.csv")
+eva_f_hpa_DADA_py <- read.csv("../result/model_sigComp/HPA_DADA_y_ccc_values.csv")
+```

@@ -1,0 +1,113 @@
+---
+title: "04.Eval_perf.Rmd"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tibble)
+rm(list = ls())
+```
+
+# Evaluation performance
+```{r}
+source("./CompareMethods.R")
+load("../result/data_sigComp/CompareMat.rda")
+load("../result/compare_method/estF.m_methods.rda")
+```
+
+# 针对gtex
+```{r}
+eva_x_EVOrigin = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = res_stim_gtex_EVOrigin[["estF.m"]], x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "EVOrigin")
+eva_f_EVOrigin = CalculateEvaMet_f(estF.m = res_stim_gtex_EVOrigin[["estF.m"]], real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "EVOrigin")
+
+eva_x_Cibersort = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = estF.m_stim_gtex_Cibersort, x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Cibersort")
+eva_f_Cibersort = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_Cibersort, real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Cibersort")
+
+eva_x_Bisque = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = estF.m_stim_gtex_Bisque, x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Bisque")
+eva_f_Bisque = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_Bisque, real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Bisque")
+
+# eva_x_Dtangle = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = estF.m_stim_gtex_Dtangle, x_state = "unknown") %>% 
+#   colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Dtangle")
+# eva_f_Dtangle = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_Dtangle, real.m = stim_gtex_y) %>% 
+#   colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Dtangle")
+
+eva_x_DeconRNASeq = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = estF.m_stim_gtex_DeconRNASeq, x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "DeconRNASeq")
+eva_f_DeconRNASeq = CalculateEvaMet_f(estF.m = estF.m_stim_gtex_DeconRNASeq, real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "DeconRNASeq")
+
+eva_x_MuSiC = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = res_stim_gtex_music$Est.prop.weighted %>% t(), x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiC")
+eva_f_MuSiC = CalculateEvaMet_f(estF.m = res_stim_gtex_music$Est.prop.weighted %>% t(), real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiC")
+
+eva_x_MuSiCnnls = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = res_stim_gtex_music$Est.prop.allgene %>% t(), x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiCnnls")
+eva_f_MuSiCnnls = CalculateEvaMet_f(estF.m = res_stim_gtex_music$Est.prop.allgene %>% t(), real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiCnnls")
+
+eva_x_dwls = CalculateEvaMet_x(data2.m = stim_gtex_x, ref2.m, estF.m = res_stim_gtex_dwls[["solDWLS"]] %>% t (), x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "dwls")
+eva_f_dwls = CalculateEvaMet_f(estF.m = res_stim_gtex_dwls[["solDWLS"]] %>% t (), real.m = stim_gtex_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "dwls")
+
+all_dat_x <- do.call("rbind", list(eva_x_EVOrigin, eva_x_Cibersort, eva_x_Bisque, eva_x_dwls, eva_x_DeconRNASeq, eva_x_MuSiC, eva_x_MuSiCnnls))
+all_dat_f <- do.call("rbind", list(eva_f_EVOrigin, eva_f_Cibersort, eva_f_Bisque, eva_f_dwls, eva_f_DeconRNASeq, eva_f_MuSiC, eva_f_MuSiCnnls))
+
+```
+
+# 针对hpa
+```{r}
+eva_x_EVOrigin = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = res_stim_hpa_EVOrigin[["estF.m"]], x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "EVOrigin")
+eva_f_EVOrigin = CalculateEvaMet_f(estF.m = res_stim_hpa_EVOrigin[["estF.m"]], real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "EVOrigin")
+
+eva_x_Cibersort = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = estF.m_stim_hpa_Cibersort, x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Cibersort")
+eva_f_Cibersort = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_Cibersort, real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Cibersort")
+
+eva_x_Bisque = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = estF.m_stim_hpa_Bisque, x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Bisque")
+eva_f_Bisque = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_Bisque, real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Bisque")
+
+# eva_x_Dtangle = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = estF.m_stim_hpa_Dtangle, x_state = "unknown") %>% 
+#   colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Dtangle")
+# eva_f_Dtangle = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_Dtangle, real.m = stim_hpa_y) %>% 
+#   colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "Dtangle")
+
+eva_x_DeconRNASeq = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = estF.m_stim_hpa_DeconRNASeq, x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "DeconRNASeq")
+eva_f_DeconRNASeq = CalculateEvaMet_f(estF.m = estF.m_stim_hpa_DeconRNASeq, real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "DeconRNASeq")
+
+eva_x_MuSiC = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = res_stim_hpa_music$Est.prop.weighted %>% t(), x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiC")
+eva_f_MuSiC = CalculateEvaMet_f(estF.m = res_stim_hpa_music$Est.prop.weighted %>% t(), real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiC")
+
+eva_x_MuSiCnnls = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = res_stim_hpa_music$Est.prop.allgene %>% t(), x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiCnnls")
+eva_f_MuSiCnnls = CalculateEvaMet_f(estF.m = res_stim_hpa_music$Est.prop.allgene %>% t(), real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "MuSiCnnls")
+
+eva_x_dwls = CalculateEvaMet_x(data2.m = stim_hpa_x, ref2.m, estF.m = res_hpa_dwls[["solDWLS"]] %>% t (), x_state = "unknown") %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "dwls")
+eva_f_dwls = CalculateEvaMet_f(estF.m = res_hpa_dwls[["solDWLS"]] %>% t (), real.m = stim_hpa_y) %>% 
+  colMeans() %>% data.frame() %>%  t() %>% data.frame() %>% mutate(method = "dwls")
+
+all_dat_x <- do.call("rbind", list(eva_x_EVOrigin, eva_x_Cibersort, eva_x_Bisque, eva_x_dwls, eva_x_DeconRNASeq, eva_x_MuSiC, eva_x_MuSiCnnls))
+all_dat_f <- do.call("rbind", list(eva_f_EVOrigin, eva_f_Cibersort, eva_f_Bisque, eva_f_dwls, eva_f_DeconRNASeq, eva_f_MuSiC, eva_f_MuSiCnnls))
+
+```
+
