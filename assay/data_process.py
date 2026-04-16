@@ -47,8 +47,8 @@ def generate_simulated_data(sc_data,
         print('Generating cell fractions using Dirichlet distribution without prior info (actually random)')
         if isinstance(random_state, int):
             np.random.seed(random_state)
-        prop = np.random.dirichlet(np.ones(num_celltype), samplenum) 
-
+        prop = np.random.dirichlet(np.ones(num_celltype), samplenum) ## dirichlet
+        # prop = np.random.exponential(scale=1.0, size=(samplenum, num_celltype)) ## Exponential Distribution
     elif d_prior is not None:
         print('Using prior info to generate cell fractions in Dirichlet distribution')
         assert len(d_prior) == num_celltype, 'dirichlet prior is a vector, its length should equals to the number of cell types'
@@ -70,8 +70,8 @@ def generate_simulated_data(sc_data,
             indices = np.random.choice(np.arange(prop.shape[1]), replace=False, size=int(prop.shape[1] * sparse_prob))
             prop[i, indices] = 0
 
-        prop = prop / np.sum(prop, axis=1).reshape(-1, 1)
-
+        prop = prop / np.sum(prop, axis=1).reshape(-1, 1) 
+        
     if rare:
         print(
             'You will set some cell type fractions are very small (<3%), '
@@ -174,11 +174,12 @@ def generate_simulated_dataVarTiss(sc_data,
     plt.xticks(np.arange(1, len(tissue_list) + 1), tissue_list)
     plt.show()
 
+    # pseudo-bulk
     sample = np.zeros((prop.shape[0], sc_data2.shape[1]))
     allcellname = list(celltype_groups.keys())
     print('Sampling cells to compose pseudo-bulk data')
     for i, sample_prop in tqdm(enumerate(cell_num), total=len(cell_num)): 
-        for j, cellname in enumerate(allcellname):
+        for j, cellname in enumerate(allcellname): 
             # print(cellname)
             select_index = choice(celltype_groups[cellname], size=int(sample_prop[j]), replace=True) 
             sample[i] += sc_data2[select_index].sum(axis=0)
@@ -191,26 +192,34 @@ def generate_simulated_dataVarTiss(sc_data,
 
     return simudata, allcellname, cell_num, prop
 
-def GTEDataGeneVar(train_data, vart = True, variance_threshold=0.98, sample_porp=[0.3, 0.6, 0.9]):
+def GTEDataGeneVar(train_data, vart=True, variance_threshold=0.98, sample_porp=[0.3, 0.6, 0.9]):
     train_x = pd.DataFrame(train_data.X, columns=train_data.var.index)
 
     if vart:
-        ### variance cutoff
         print('Cutting variance...')
-        var_cutoff = train_x.var(axis=0).sort_values(ascending=False)[int(train_x.shape[1] * variance_threshold)]
-        train_x = train_x.loc[:, train_x.var(axis=0) > var_cutoff]
-        var_genename = list(train_x.columns)
+        all_variances = train_x.var(axis=0).sort_values(ascending=False)
+        
+        # 2. 根据 variance_threshold 
+        cutoff_index = int(train_x.shape[1] * variance_threshold)
+        var_cutoff = all_variances.iloc[cutoff_index]
+        
+        valid_genes_series = all_variances[all_variances > var_cutoff]
+        var_genename = list(valid_genes_series.index)
+        
+        print(f"Initial filtering kept {len(var_genename)} genes (Top {(1-variance_threshold)*100:.1f}% variance).")
 
-        # Sample genes based on the specified sample sizes
+        # 3. Top N gene
         num_genes = train_x.shape[1]
-        sample_sizes = np.round([sample_porp[0] * num_genes, sample_porp[1] * num_genes, sample_porp[2] * num_genes]).astype(int)
+        sample_sizes = np.round([p * num_genes for p in sample_porp]).astype(int)
 
         sampled_genes = {}
         for size in sample_sizes:
             if size <= len(var_genename):
-                sampled_genes[size] = np.random.choice(var_genename, size=size, replace=False)
+                top_genes = valid_genes_series.index[:size]
+                sampled_genes[size] = list(top_genes)
+                print(f"  - Selected Top {size} genes (Variance range: {valid_genes_series[0]:.4f} - {valid_genes_series[size-1]:.4f})")
             else:
-                print(f"Warning: Requested sample size {size} exceeds the available gene list size. Returning all genes.")
+                print(f"  - Warning: Requested sample size {size} exceeds available high-variance genes ({len(var_genename)}). Returning all available.")
                 sampled_genes[size] = var_genename
 
         return var_genename, sampled_genes
@@ -218,57 +227,6 @@ def GTEDataGeneVar(train_data, vart = True, variance_threshold=0.98, sample_porp
     else:
        return list(train_x.columns)
 
-def GTEDataGeneVarIntv(train_data):
-
-    train_x = pd.DataFrame(train_data.X, columns=train_data.var.index)
-    vars = train_x.var(axis=0).sort_values(ascending=False)
-    var_cutoff1 = vars[int(train_x.shape[1] * 0.3)] 
-    var_cutoff2 = vars[int(train_x.shape[1] * 0.6)] 
-    var_cutoff3 = vars[int(train_x.shape[1] * 0.9)]
-
-    train_x1 = train_x.loc[:, vars > var_cutoff1]
-    var_genename1 = list(train_x1.columns)
-
-    train_x2 = train_x.loc[:, (vars > var_cutoff2) & (vars <= var_cutoff1)]
-    var_genename2 = list(train_x2.columns)
-
-    train_x3 = train_x.loc[:, (vars > var_cutoff3) & (vars <= var_cutoff2)]
-    var_genename3 = list(train_x3.columns)
-
-    sampled_genes = {
-        'high_variance': var_genename1,
-        'medium_variance': var_genename2,
-        'low_variance': var_genename3
-    }
-    return sampled_genes
- 
-def GTEDataGeneVarReal(train_data, variance_threshold=0.98, sample_porp=[0.3, 0.6, 0.9]):
-
-    train_x = pd.read_csv(train_data, index_col=0, sep='\t')
-
-    ### variance cutoff
-    print('Cutting variance...')
-    var_cutoff = train_x.var(axis=0).sort_values(ascending=False)[int(train_x.shape[1] * variance_threshold)]
-    train_x = train_x.loc[:, train_x.var(axis=0) > var_cutoff]
-
-    ### find intersected genes
-    print('Finding intersected genes...')
-    var_genename = list(train_x.columns)
-
-    # Sample genes based on the specified sample sizes
-    num_genes = train_x.shape[1]
-    sample_sizes = np.round([sample_porp[0] * num_genes, sample_porp[1] * num_genes, sample_porp[2] * num_genes]).astype(int)
-
-    sampled_genes = {}
-    for size in sample_sizes:
-        if size <= len(var_genename):
-            sampled_genes[size] = np.random.choice(var_genename, size=size, replace=False)
-        else:
-            print(f"Warning: Requested sample size {size} exceeds the available gene list size. Returning all genes.")
-            sampled_genes[size] = var_genename
-
-    return var_genename, sampled_genes
-  
 def GetXandYSelG(train_data, sel_genes, scaler="mms"):
     train_x = pd.DataFrame(train_data.X, columns=train_data.var.index)
     train_y = train_data.obs
@@ -312,44 +270,6 @@ def GetXandYSelGReal(train_data, sel_genes, scaler="mms"):
         mms_train_x = mms.fit_transform(train_x.T).T
         return mms_train_x
 
-def PlotData(GTE_dat, HPA_dat, real_dat, per = 0.3):
-        
-    fig = plt.figure()
-    sns.histplot(data=np.mean(GTE_dat, axis=0), kde=True, color='#f46d43',edgecolor=None)
-    sns.histplot(data=np.mean(HPA_dat, axis=0), kde=True, color='#fee08b',edgecolor=None)
-    sns.histplot(data=np.mean(real_dat, axis=0), kde=True, color='#66bd63',edgecolor=None)
-    plt.legend(title='Percent' + str(per), labels=["GTE", "HPA", "real"])
-    plt.show()
-
-def PlotDataTwoSet(GTE_dat, HPA_dat, per = 0.3, labs = ["GTE", "HPA"]):
-    fig = plt.figure()
-    sns.histplot(data=np.mean(GTE_dat, axis=0), kde=True, color='#f46d43',edgecolor=None)
-    sns.histplot(data=np.mean(HPA_dat, axis=0), kde=True, color='#fee08b',edgecolor=None)
-    plt.legend(title='Percent' + str(per), labels=labs)
-    plt.show()
-
-def PlotDataTsne(GTE_dat, HPA_dat, real_dat, per = 0.3):
-    all_data = np.concatenate([GTE_dat, HPA_dat, real_dat], axis=0)
-    tsne = TSNE(n_components=2, random_state=42)
-    tsne_results = tsne.fit_transform(all_data)
-    labels = ['GTE'] * GTE_dat.shape[0] + ['HPA'] * HPA_dat.shape[0] + ['real'] * real_dat.shape[0]
-    plt.figure(figsize=(8, 6))
-    sns.scatterplot(x=tsne_results[:, 0], y=tsne_results[:, 1], hue=labels, palette=['#f46d43', '#fee08b', '#66bd63'], s=50, alpha=0.7)
-    plt.title(f't-SNE plot (Percent = {per})', fontsize=16)
-    plt.legend(title='Dataset', labels=["GTE", "HPA", "real"])
-    plt.show()
-
-def PlotDataTsneTwoSet(GTE_dat, HPA_dat, per = 0.3, labs = ["GTE", "HPA"]):
-    all_data = np.concatenate([GTE_dat, HPA_dat], axis=0)
-    tsne = TSNE(n_components=2, random_state=42)
-    tsne_results = tsne.fit_transform(all_data)
-    labels = ['GTE'] * GTE_dat.shape[0] + ['HPA'] * HPA_dat.shape[0]
-    plt.figure(figsize=(4, 3))
-    sns.scatterplot(x=tsne_results[:, 0], y=tsne_results[:, 1], hue=labels, palette=['#f46d43', '#fee08b'], s=50, alpha=0.7)
-    plt.title(f't-SNE plot (Percent = {per})', fontsize=16)
-    plt.legend(title='Dataset', labels=labs)
-    plt.show()
-
 def DataSplitTrValTe(sim_scaled, simulated_y, test_size=0.2, val_size=0.2):
 
     indices = np.arange(sim_scaled.shape[0])
@@ -373,3 +293,109 @@ def DataSplitTrValTe(sim_scaled, simulated_y, test_size=0.2, val_size=0.2):
 
     return simulated_x_train, simulated_x_val, simulated_x_test, simulated_y_train, simulated_y_val, simulated_y_test
 
+def generate_simulated_data_final(sc_data, 
+                            d_prior=None,
+                            n=500, samplenum=5000,
+                            random_state=None, sparse=True, sparse_prob=0.5,
+                            rare=False, rare_percentage=0.4,
+                            # --- EV Biology & Noise Params ---
+                            simulate_ev_biology=True,  
+                            packaging_sigma=0.8,       
+                            dropout_strength=0.5,      
+                            dispersion_shape=1.5  
+                            ):
+
+    print('Reading single-cell dataset, this may take 1 min')
+    if isinstance(sc_data, str) and '.txt' in sc_data:
+        sc_data = pd.read_csv(sc_data, index_col=0, sep='\t')
+        sc_data.dropna(inplace=True)
+        sc_data['celltype'] = sc_data.index
+        sc_data.index = range(len(sc_data))
+    
+    num_celltype = len(sc_data['celltype'].value_counts())
+    genename = sc_data.columns[:-1]
+
+    celltype_groups = sc_data.groupby('celltype').groups
+    sc_data.drop(columns='celltype', inplace=True)
+    sc_data_X = np.ascontiguousarray(sc_data.values, dtype=np.float32)
+
+    if random_state is not None:
+        np.random.seed(random_state)
+        
+    if d_prior is None:
+        prop = np.random.dirichlet(np.ones(num_celltype), samplenum)
+    else:
+        prop = np.random.dirichlet(d_prior, samplenum)
+
+    prop = prop / np.sum(prop, axis=1).reshape(-1, 1)
+    if sparse:
+        for i in range(int(prop.shape[0] * sparse_prob)):
+            indices = np.random.choice(np.arange(prop.shape[1]), replace=False, size=int(prop.shape[1] * sparse_prob))
+            prop[i, indices] = 0
+        prop = prop / np.sum(prop, axis=1).reshape(-1, 1)
+
+    if rare:
+        indices = np.random.choice(np.arange(prop.shape[1]), replace=False, size=int(prop.shape[1] * rare_percentage))
+        for i in range(int(0.5 * prop.shape[0])): 
+            prop[i, indices] = 0 
+            prop[i] = prop[i] / np.sum(prop[i])
+
+    cell_num = np.floor(n * prop)
+    prop = cell_num / np.sum(cell_num, axis=1).reshape(-1, 1) 
+    n_genes = sc_data_X.shape[1]
+    if random_state is not None:
+        np.random.seed(random_state + 100) 
+    
+    packaging_factors = np.random.lognormal(mean=0, sigma=packaging_sigma, size=n_genes)
+    sample = np.zeros((prop.shape[0], sc_data_X.shape[1]))
+    group_indices = {k: np.array(v) for k, v in celltype_groups.items()}
+    allcellname = list(group_indices.keys())
+    
+    print('Sampling cells and applying non-Gaussian transforms...')
+    for i, sample_prop in tqdm(enumerate(cell_num), total=len(cell_num)):
+        current_sample_sum = np.zeros(n_genes)
+        
+        for j, cellname in enumerate(allcellname):
+            if int(sample_prop[j]) > 0:
+                select_index = np.random.choice(group_indices[cellname], size=int(sample_prop[j]), replace=True)
+                current_sample_sum += sc_data_X[select_index].sum(axis=0)
+
+        if simulate_ev_biology:
+            # --- STEP 1 ---
+            ev_profile = current_sample_sum * packaging_factors
+            
+            # --- STEP 2: dispersion_shape ---
+            gamma_noise = np.random.gamma(shape=dispersion_shape, scale=1.0, size=n_genes)
+            ev_profile = ev_profile * gamma_noise
+            
+            # --- STEP 3 ---
+            depth_factor = np.random.uniform(0.8, 1.2) 
+            ev_profile = ev_profile * depth_factor
+            
+            # --- STEP 4: Dropout ---
+            log_expr = np.log1p(ev_profile)
+            offset = np.percentile(log_expr, 20) * dropout_strength  
+            slope = 2.0 
+            keep_prob = 1 / (1 + np.exp(-slope * (log_expr - offset))) 
+            dropout_mask = np.random.random(n_genes) < keep_prob
+            ev_profile = ev_profile * dropout_mask
+            
+            sample[i] = ev_profile
+        else:
+            sample[i] = current_sample_sum
+
+    prop = pd.DataFrame(prop, columns=allcellname)
+    simudata = anndata.AnnData(X=sample,
+                               obs=prop,
+                               var=pd.DataFrame(index=genename))
+    print('Sampling is done. Data shape:', simudata.shape)
+    return simudata, allcellname
+
+def PlotData(GTE_dat, HPA_dat, real_dat, per = 0.3):
+        
+    fig = plt.figure()
+    sns.histplot(data=np.mean(GTE_dat, axis=0), kde=True, color='#f46d43',edgecolor=None)
+    sns.histplot(data=np.mean(HPA_dat, axis=0), kde=True, color='#fee08b',edgecolor=None)
+    sns.histplot(data=np.mean(real_dat, axis=0), kde=True, color='#66bd63',edgecolor=None)
+    plt.legend(title='Percent' + str(per), labels=["GTE", "HPA", "real"])
+    plt.show()
