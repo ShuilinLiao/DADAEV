@@ -31,15 +31,8 @@ vignettes/*.pdf
 *_cache/
 /cache/
 
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
-
 # R Environment Variables
 .Renviron
 
-# Mac os file
-.DS_Store
-
-# result
-# data
+assay_v1
+assay_v2

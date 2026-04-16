@@ -534,246 +534,21 @@ def alternate_training_earlyStop(model, dataloader, val_loader, optimizer_main, 
 
     return model, main_losses, diffusion_losses
 
-def predict2(test_x, trainX, model_name=None, adaptive=True, mode='overall', device='cuda'):
-
-    if model_name is not None:
-        model = torch.load(model_name + ".pth", weights_only=False, map_location=device)
-
-    if adaptive is True:
-        if mode == 'overall':
-            #设置解码优化器
-            decoder_optimizer  = torch.optim.Adam(model.decoder.parameters(), lr=1e-4)
-            #设置编码优化器
-            encoder_optimizer =  torch.optim.Adam(
-                [
-                    {'params':model.encoder.parameters()},
-                    {'params':model.predictor.parameters()}
-                ],lr=1e-4
-            )
-            #设置域对抗优化器
-            optimizer_D = torch.optim.Adam(
-                [{'params': model.encoder.parameters()},
-                {'params': model.discriminator.parameters()}],
-                lr=1e-5 )
-
-            test_sigm, loss, test_pred,  x_recon_res = adaptive_stage_domain(model, test_x, trainX, optimizer_D, encoder_optimizer, decoder_optimizer, steps=500, max_iter=3, device=device)
-            return test_sigm, test_pred, x_recon_res
-
-    else:
-        print('Predict cell fractions without adaptive training')
-        model.eval()
-        model.state = 'test'
-        data = torch.from_numpy(test_x).float().to(device)
-        _, pred, _ = model(data)
-        pred = pred.cpu().detach().numpy()
-        print('Prediction is done')
-        return 
-     
-def adaptive_stage_domain_difSAwiwoS_noise(x, sour_x_train = None, model_name=None, 
-                                           adaptive=True, mode='overall5', 
-                           steps=20, max_iter=40, device='cuda', 
-                           sigmatrix=None, ep_warmup=50, save_name=None, 
-                           real_std=1, real_mean=0,
-                           generator=None, modeS="wt",
-                           teacher_noise_std=0.0  
-                           ): 
+def adaptive_stage_domain_unified(x, sour_x_train=None, model_name=None, 
+                                 adaptive=True, mode='overall5', 
+                                 steps=20, max_iter=40, device='cuda', 
+                                 sigmatrix=None, ep_warmup=50, save_name=None, 
+                                 real_std=1, real_mean=0,
+                                 generator=None, modeS="wt",
+                                 teacher_noise_std=0.0):
 
     Domain_Loss = nn.CrossEntropyLoss()
     
-    # 1. 加载模型
+    # 1. model loading
     if model_name is not None:
         model = torch.load(model_name + ".pth", weights_only=False, map_location=device)
         model = model.to(device)
     
-    # 自动侦测隐层维度 (Latent Dimension)
-    with torch.no_grad():
-        # 取前2个样本跑一次 encode，看看输出是多少维 (比如 256)
-        dummy_input = torch.tensor(x[0:2]).float().to(device)
-        dummy_z = model.encode(dummy_input)
-        latent_dim = dummy_z.shape[1] 
-        print(f"Detected Latent Dimension: {latent_dim} (Original Gene Dim: {x.shape[1]})")
-
-    realdata_loader = DataLoader(realdatset(x), batch_size=len(x), shuffle=False) 
-    
-    if sour_x_train is not None:
-        print(sour_x_train.shape[0])
-        print(x.shape[0])
-        indices = np.random.choice(sour_x_train.shape[0], x.shape[0], replace=False)
-        ori_sour = sour_x_train[indices]
-        ori_sour = torch.tensor(ori_sour, device=device).to(torch.float32)
-        
-    elif sour_x_train is None:
-        # 预生成数据 (Pre-generation)
-        # 避免在循环中实时采样 Diffusion，解决训练慢的问题
-        source_bank = None
-        if adaptive and generator is None:
-            print(">>> Pre-generating Source Latents via Diffusion...")
-            n_generate = 50000 
-            batch_gen = 2000
-            bank_list = []
-            
-            model.eval()
-            with torch.no_grad():
-                for _ in range(0, n_generate, batch_gen):
-                    z_gen = model.ref_creator.sample(batch_gen, latent_dim)
-                    bank_list.append(z_gen.cpu())
-            
-            source_bank = torch.cat(bank_list, dim=0).to(device)
-            print(f">>> Generated {source_bank.shape[0]} latent samples.")
-
-        # 辅助函数：统一采样接口
-        def get_source_samples(n_samples):
-            if generator is not None:
-                # 使用外部生成器 (GMM/Gaussian)
-                z = generator.sample(n_samples)
-            elif source_bank is not None:
-                # 使用预生成池 (Diffusion 极速版)
-                indices = torch.randint(0, source_bank.shape[0], (n_samples,), device=device)
-                z = source_bank[indices]
-                # 反标准化 (如果训练时做了标准化)
-                # z = z * real_std + real_mean
-            else:
-                # 实时生成 (不推荐，很慢)
-                z = model.ref_creator.sample(n_samples, latent_dim)
-                z = z * real_std + real_mean
-            
-            return z.to(device).detach()
-
-    best_pcc = -1
-    best_model = None
-    model_copy = copy.deepcopy(model)
-    model_copy = model_copy.to(device)
-    model_copy.eval() 
-
-    # === Main Adaptation Phase ===
-    if adaptive is True:
-        if mode == 'overall5':
-            model.train()
-            # 解冻需要训练的参数
-            for param in model.encoder.parameters(): param.requires_grad = True
-            for param in model.discriminator.parameters(): param.requires_grad = True
-            for param in model.predictor.parameters(): param.requires_grad = True
-            for param in model.decoder.parameters(): param.requires_grad = True 
-            
-            model.state = 'train'
-            model.ref_creator.requires_grad_(False) 
-
-            optimizer_da1 = torch.optim.AdamW([
-                {'params':model.encoder.parameters()},
-                {'params':model.predictor.parameters()},
-                {'params':model.discriminator.parameters()}], lr=1e-5)
-            optimizer_da2 = torch.optim.AdamW([
-                {'params':model.encoder.parameters()},
-                {'params':model.discriminator.parameters()}], lr=1e-5)
-            optimizer_da3 = torch.optim.AdamW([
-                {'params':model.encoder.parameters()},
-                {'params':model.decoder.parameters()},
-                {'params':model.predictor.parameters()}], lr=1e-5)
-            
-            for iter in range(max_iter):
-                if (iter+1) % 10 == 0:
-                    print(f"Iter [{iter+1}/{max_iter}]")
-                
-                # Domain adaptation Loop
-                for _ in range(steps):
-                    model.train()
-                    model.state = 'adapt'
-                    
-                    for step, X in enumerate(realdata_loader):
-                        X = X.to(device)
-                        
-                        if sour_x_train is not None:
-                            z_batch = model_copy.encode(ori_sour).detach()    
-                            
-                        elif sour_x_train is None:
-                            z_batch = get_source_samples(X.shape[0])    
-                                        
-                        z_target = model.encoder(X) 
-
-                        # Step 1: Align Predictor & Discriminator
-                        _, ground_true, preds2 = model(X, z_batch) 
-                        ground_true = ground_true.squeeze().long().to(device)
-                        disc_loss = Domain_Loss(preds2, ground_true)
-                        # print(disc_loss)
-                        
-                        source_frac = get_frac_from_sigmatrix(model_copy, z_batch, sigmatrix) # z_batch z_target
-                        source_frac = source_frac.to(device)
-                        
-                        # === 注入噪声测试鲁棒性 ===
-                        if teacher_noise_std > 0:
-                            noise = torch.randn_like(source_frac) * teacher_noise_std
-                            source_frac = source_frac + noise
-                            # source_frac = torch.clamp(source_frac, min=0.0)  # 保证非负
-                            
-                        frac = model.predictor(z_batch) # z_batch z_target 
-                        frac = F.relu(frac)
-                        frac_pred = model.refraction(frac)
-                        pred_loss = compute_mmd(frac_pred, source_frac)
-                            
-                        if modeS=="wt":
-                            loss =  disc_loss + pred_loss
-                        else:
-                            loss = disc_loss #  + 0.1 * pred_loss
-                        
-                        optimizer_da1.zero_grad()
-                        loss.backward()
-                        optimizer_da1.step()
-
-                        # Step 2: Adversarial Training for Encoder
-                        preds, ground_true, _ = model(X, z_batch) 
-                        ground_true = ground_true.squeeze().long().to(device)
-                        disc_loss_DA = Domain_Loss(preds, ground_true)
-                        disc_loss_DA.backward()
-                        optimizer_da2.step()
-                        optimizer_da2.zero_grad()
-
-                    # Step 3: Reconstruction
-                    model.train()
-                    model.state = 'adapt'
-                    for step, X in enumerate(realdata_loader):
-                        X = X.to(device)
-                        z_targ = model.encode(X)
-                        z_targ_recon = model.decoder(z_targ)
-                        recon_loss = F.mse_loss(X, z_targ_recon)
-                        
-                        da3_loss = recon_loss
-                        da3_loss.backward()
-                        optimizer_da3.step()
-                        optimizer_da3.zero_grad()
-    else:
-        model = model
-
-    # 最终预测
-    model.eval()
-    model.state = 'test'
-    with torch.no_grad():
-        for _, X in enumerate(realdata_loader):
-            X = X.to(device)
-            x_recon_res, pred_res, z_res = model(X)
-            break 
-    
-    return (
-        x_recon_res.detach().cpu().numpy(),
-        pred_res.detach().cpu().numpy(),
-        z_res.detach().cpu().numpy(),
-        model
-    )
-      
-def adaptive_stage_domain_difSAwiwoS_latentMMD(x, model_name=None, adaptive=True, mode='overall5', 
-                           steps=20, max_iter=200, device='cuda', 
-                           sigmatrix=None, ep_warmup=50, save_name=None, 
-                           real_std=1, real_mean=0,
-                           generator=None, modeS="wt",
-                           teacher_noise_std=0.0): 
-
-    Domain_Loss = nn.CrossEntropyLoss()
-    
-    # 1. Load Model
-    if model_name is not None:
-        model = torch.load(model_name + ".pth", weights_only=False, map_location=device)
-        model = model.to(device)
-    
-    # Detect Latent Dim
     with torch.no_grad():
         dummy_input = torch.tensor(x[0:2]).float().to(device)
         dummy_z = model.encode(dummy_input)
@@ -782,150 +557,114 @@ def adaptive_stage_domain_difSAwiwoS_latentMMD(x, model_name=None, adaptive=True
 
     realdata_loader = DataLoader(realdatset(x), batch_size=len(x), shuffle=False) 
     
-    # Pre-generate Source Bank
+    # 2. deal with source domain data
     source_bank = None
-    if adaptive and generator is None:
-        print(">>> Pre-generating Source Latents via Diffusion...")
-        n_generate = 5000  # Adjusted size for evaluation
-        batch_gen = 1000
-        bank_list = []
-        model.eval()
-        with torch.no_grad():
-            for _ in range(0, n_generate, batch_gen):
-                z_gen = model.ref_creator.sample(batch_gen, latent_dim)
-                bank_list.append(z_gen.cpu())
-        source_bank = torch.cat(bank_list, dim=0).to(device)
+    ori_sour = None
 
+    if sour_x_train is not None:
+        # mode A: use original data as source domain
+        print(f">>> Using source training data (Size: {sour_x_train.shape[0]})")
+        indices = np.random.choice(sour_x_train.shape[0], x.shape[0], replace=False)
+        ori_sour = torch.tensor(sour_x_train[indices], device=device).to(torch.float32)
+    else:
+        # mode B: use generated latents as source domain
+        if adaptive and generator is None:
+            print(">>> Pre-generating Source Latents via Diffusion...")
+            n_generate = 5000 if "latentMMD" in str(save_name) else 50000 
+            batch_gen = 2000
+            bank_list = []
+            model.eval()
+            with torch.no_grad():
+                for _ in range(0, n_generate, batch_gen):
+                    z_gen = model.ref_creator.sample(batch_gen, latent_dim)
+                    bank_list.append(z_gen.cpu())
+            source_bank = torch.cat(bank_list, dim=0).to(device)
+            print(f">>> Generated {source_bank.shape[0]} samples.")
+
+    # sampling helper function
     def get_source_samples(n_samples):
-        if generator is not None:
-            z = generator.sample(n_samples)
+        if sour_x_train is not None:
+            # get latents from original data encoding
+            return model_copy.encode(ori_sour).detach()
+        elif generator is not None:
+            return generator.sample(n_samples).to(device).detach()
         elif source_bank is not None:
             indices = torch.randint(0, source_bank.shape[0], (n_samples,), device=device)
-            z = source_bank[indices]
+            return source_bank[indices].detach()
         else:
             z = model.ref_creator.sample(n_samples, latent_dim)
-            z = z * real_std + real_mean
-        return z.to(device).detach()
+            return (z * real_std + real_mean).detach()
 
-    def get_latents_subset(model, x_input, max_samples=2000):
-        n_total = x_input.shape[0]
-        
-        if n_total > max_samples:
-            indices = np.random.choice(n_total, max_samples, replace=False)
-            x_subset = x_input[indices]
-        else:
-            x_subset = x_input
-            
-        x_subset = torch.tensor(x_subset).float().to(device)
-        z_subset = model.encode(x_subset)
-        return z_subset
-    
-    model_copy = copy.deepcopy(model)
-    model_copy = model_copy.to(device)
+    # 3. preparation for adaptive training
+    model_copy = copy.deepcopy(model).to(device)
     model_copy.eval() 
 
-    # === Main Adaptation Phase ===
-    if adaptive is True:
-        if mode == 'overall5':
-            model.train()
+    if adaptive:
+        model.train()
+        for param in model.parameters(): param.requires_grad = True
+        model.ref_creator.requires_grad_(False)
+        model.state = 'train'
+
+        opt_params1 = [{'params':model.encoder.parameters()},{'params':model.predictor.parameters()},{'params':model.discriminator.parameters()}]
+        opt_params2 = [{'params':model.encoder.parameters()},{'params':model.discriminator.parameters()}]
+        opt_params3 = [{'params':model.encoder.parameters()},{'params':model.decoder.parameters()},{'params':model.predictor.parameters()}]
+        
+        optimizer_da1 = torch.optim.AdamW(opt_params1, lr=1e-5)
+        optimizer_da2 = torch.optim.AdamW(opt_params2, lr=1e-5)
+        optimizer_da3 = torch.optim.AdamW(opt_params3, lr=1e-5)
+        
+        for iter in range(max_iter):
+            if (iter+1) % 10 == 0: print(f"Iter [{iter+1}/{max_iter}]")
             
-            for param in model.encoder.parameters(): param.requires_grad = True
-            for param in model.discriminator.parameters(): param.requires_grad = True
-            for param in model.predictor.parameters(): param.requires_grad = True
-            for param in model.decoder.parameters(): param.requires_grad = True 
-            
-            model.state = 'train'
-            model.ref_creator.requires_grad_(False)
-            
-            # Define Optimizers
-            optimizer_da1 = torch.optim.Adam([
-                {'params':model.encoder.parameters()},
-                {'params':model.predictor.parameters()},
-                {'params':model.discriminator.parameters()}
-                ], lr=1e-5)
-            optimizer_da2 = torch.optim.Adam([
-                {'params':model.encoder.parameters()},
-                {'params':model.discriminator.parameters()}
-                ], lr=1e-5)
-            optimizer_da3 = torch.optim.Adam([
-                {'params':model.encoder.parameters()},
-                {'params':model.decoder.parameters()},
-                {'params':model.predictor.parameters()}
-                ], lr=1e-5)
-            
-            for iter in range(max_iter):
-                if (iter+1) % 10 == 0:
-                    print(f"Iter [{iter+1}/{max_iter}]")
+            for _ in range(steps):
+                model.train()
+                model.state = 'adapt'
                 
-                for _ in range(steps):
-                    model.train()
-                    model.state = 'adapt'
+                for step, X in enumerate(realdata_loader):
+                    X = X.to(device)
+                    z_batch = get_source_samples(X.shape[0])
                     
-                    for step, X in enumerate(realdata_loader):
-                        X = X.to(device)
-                        z_batch = get_source_samples(X.shape[0])                        
-                        z_target = model.encoder(X) 
+                    # Step 1: Align Predictor & Discriminator
+                    _, ground_true, preds2 = model(X, z_batch) 
+                    ground_true = ground_true.squeeze().long().to(device)
+                    disc_loss = Domain_Loss(preds2, ground_true)
+                    
+                    pred_loss = 0
+                    if modeS == "wt":
+                        source_frac = get_frac_from_sigmatrix(model_copy, z_batch, sigmatrix).to(device)
+                        if teacher_noise_std > 0:
+                            source_frac += torch.randn_like(source_frac) * teacher_noise_std
                         
-                        # Step 1: Align Predictor & Discriminator
-                        _, ground_true, preds2 = model(X, z_batch) 
-                        ground_true = ground_true.squeeze().long().to(device)
-                        disc_loss = Domain_Loss(preds2, ground_true)
-                        
-                        if modeS=="wt":
-                            source_frac = get_frac_from_sigmatrix(model_copy, z_batch, sigmatrix)
-                            source_frac = source_frac.to(device)
-                            if teacher_noise_std > 0:
-                                noise = torch.randn_like(source_frac) * teacher_noise_std
-                                source_frac = source_frac + noise
-                                
-                            frac = model.predictor(z_batch) 
-                            frac = F.relu(frac)
-                            frac_pred = model.refraction(frac)
-                        
-                            pred_loss = compute_mmd(frac_pred, source_frac) # This is your existing Fraction MMD
-                            loss = disc_loss + pred_loss
-                        else:
-                            loss = disc_loss
-                        
-                        optimizer_da1.zero_grad()
-                        loss.backward()
-                        optimizer_da1.step()
+                        frac = F.relu(model.predictor(z_batch))
+                        frac_pred = model.refraction(frac)
+                        pred_loss = compute_mmd(frac_pred, source_frac)
+                    
+                    loss = disc_loss + pred_loss if modeS == "wt" else disc_loss
+                    
+                    optimizer_da1.zero_grad(); loss.backward(); optimizer_da1.step()
 
-                        # Step 2: Adversarial Training for Encoder
-                        preds, ground_true, _ = model(X, z_batch) 
-                        ground_true = ground_true.squeeze().long().to(device)
-                        disc_loss_DA = Domain_Loss(preds, ground_true)
-                        
-                        optimizer_da2.zero_grad()
-                        disc_loss_DA.backward()
-                        optimizer_da2.step()
-                        
-                    # Step 3: Reconstruction
-                    model.train()
-                    model.state = 'adapt'
-                    for step, X in enumerate(realdata_loader):
-                        X = X.to(device)
-                        z_targ = model.encode(X)
-                        z_targ_recon = model.decoder(z_targ)
-                        recon_loss = F.mse_loss(X, z_targ_recon)
-                        
-                        optimizer_da3.zero_grad()
-                        recon_loss.backward()
-                        optimizer_da3.step()
+                    # Step 2: Adversarial Training for Encoder
+                    preds, ground_true, _ = model(X, z_batch) 
+                    ground_true = ground_true.squeeze().long().to(device)
+                    disc_loss_DA = Domain_Loss(preds, ground_true)
+                    
+                    optimizer_da2.zero_grad(); disc_loss_DA.backward(); optimizer_da2.step()
 
-    # Final Inference
+                # Step 3: Reconstruction
+                for step, X in enumerate(realdata_loader):
+                    X = X.to(device)
+                    z_targ = model.encode(X)
+                    recon_loss = F.mse_loss(X, model.decoder(z_targ))
+                    
+                    optimizer_da3.zero_grad(); recon_loss.backward(); optimizer_da3.step()
+
+    # 4. final inference
     model.eval()
     model.state = 'test'
     with torch.no_grad():
-        for _, X in enumerate(realdata_loader):
+        for X in realdata_loader:
             X = X.to(device)
             x_recon_res, pred_res, z_res = model(X)
             break 
     
-    return (
-        x_recon_res.detach().cpu().numpy(),
-        pred_res.detach().cpu().numpy(),
-        z_res.detach().cpu().numpy(),
-        model
-    )
-
+    return x_recon_res.detach().cpu().numpy(), pred_res.detach().cpu().numpy(), z_res.detach().cpu().numpy(), model
